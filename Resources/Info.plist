@@ -10,6 +10,8 @@
     <string>com.velppa.SafariTabs</string>
     <key>CFBundleExecutable</key>
     <string>SafariTabs</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>
