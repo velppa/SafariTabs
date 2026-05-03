@@ -2,6 +2,7 @@
 
 A native macOS app to manage tabs in Safari Web Browser.
 
-Inspired by [[https://www.gingerbeardman.com/apps/tabulator/][Tabulator]] app by Matt Sephton and SafariTabs for Seal.spoon.
+Inspired by [[https://www.gingerbeardman.com/apps/tabulator/][Tabulator]] app by Matt Sephton and SafariTabs plugin for
+Seal.spoon.
 
-- /Users/pavel/.velppa/Dotfiles/hammerspoon/Spoons/Seal.spoon/seal_safari_tabs.lua
+[[./doc/safari-tabs.png]]
