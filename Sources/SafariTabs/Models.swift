@@ -1,12 +1,13 @@
 import Foundation
 
 struct SafariTab: Identifiable, Hashable {
+    let windowID: Int
     let windowIndex: Int
     let tabIndex: Int
     let title: String
     let url: String
 
-    var id: String { "\(windowIndex):\(tabIndex)" }
+    var id: String { "\(windowID):\(tabIndex)" }
 
     var domain: String {
         guard let host = URL(string: url)?.host else { return url }
@@ -21,9 +22,9 @@ struct SafariTab: Identifiable, Hashable {
 }
 
 struct SafariWindow: Identifiable, Hashable {
+    let id: Int
     let index: Int
     let tabs: [SafariTab]
 
-    var id: Int { index }
     var title: String { "Window \(index)" }
 }

@@ -20,7 +20,11 @@ final class TabsStore: ObservableObject {
         Task.detached(priority: .userInitiated) {
             let result = SafariBridge.fetchWindows()
             await MainActor.run {
-                self.windows = result
+                // Don't blank the UI on a transient empty fetch (Safari mid-transition).
+                // Only commit when we got something, OR when we're confident Safari truly has no windows.
+                if !result.isEmpty || self.windows.isEmpty {
+                    self.windows = result
+                }
                 self.lastRefresh = Date()
             }
         }
