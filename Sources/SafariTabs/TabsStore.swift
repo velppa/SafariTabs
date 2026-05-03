@@ -45,6 +45,14 @@ final class TabsStore: ObservableObject {
         }
     }
 
+    func removeByURL(_ url: String) {
+        windows = windows.compactMap { window in
+            let kept = window.tabs.filter { $0.url != url }
+            guard !kept.isEmpty else { return nil }
+            return SafariWindow(id: window.id, index: window.index, tabs: kept)
+        }
+    }
+
     var totalCount: Int { windows.reduce(0) { $0 + $1.tabs.count } }
 
     var matchCount: Int {

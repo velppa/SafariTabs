@@ -90,6 +90,32 @@ enum SafariBridge {
         _ = run(script)
     }
 
+    /// Activate the first Safari tab whose URL matches.
+    @discardableResult
+    static func activate(url: String) -> Bool {
+        guard let tab = findByURL(url) else {
+            log("activate(url:) no match for \(url)")
+            return false
+        }
+        activate(tab)
+        return true
+    }
+
+    /// Close the first Safari tab whose URL matches.
+    @discardableResult
+    static func closeTab(url: String) -> Bool {
+        guard let tab = findByURL(url) else {
+            log("closeTab(url:) no match for \(url)")
+            return false
+        }
+        closeTab(tab)
+        return true
+    }
+
+    private static func findByURL(_ url: String) -> SafariTab? {
+        fetchWindows().flatMap { $0.tabs }.first { $0.url == url }
+    }
+
     /// Re-fetch Safari and find the current windowIndex/tabIndex for the given tab.
     private static func locate(_ tab: SafariTab) -> SafariTab? {
         let windows = fetchWindows()
