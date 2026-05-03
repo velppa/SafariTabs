@@ -82,6 +82,8 @@ struct ContentView: View {
                 .keyboardShortcut(.rightArrow, modifiers: [])
             Button("") { activateSelected() }
                 .keyboardShortcut(.return, modifiers: [])
+            Button("") { closeSelected() }
+                .keyboardShortcut(.delete, modifiers: .command)
         }
         .opacity(0)
         .frame(width: 0, height: 0)
@@ -122,6 +124,23 @@ struct ContentView: View {
               let tab = store.windows.flatMap({ $0.tabs }).first(where: { $0.id == sel })
         else { return }
         SafariBridge.activate(tab)
+    }
+
+    private func closeSelected() {
+        guard let sel = selection,
+              let win = store.windows.first(where: { $0.tabs.contains(where: { $0.id == sel }) }),
+              let tab = win.tabs.first(where: { $0.id == sel })
+        else { return }
+        let visible = store.filtered(win)
+        let nextID: SafariTab.ID? = {
+            guard let i = visible.firstIndex(where: { $0.id == sel }) else { return nil }
+            if i + 1 < visible.count { return visible[i + 1].id }
+            if i - 1 >= 0 { return visible[i - 1].id }
+            return nil
+        }()
+        store.remove(tab.id)
+        selection = nextID
+        Task.detached { SafariBridge.closeTab(tab) }
     }
 
     private func focusWindow(_ n: Int, proxy: ScrollViewProxy) {
@@ -197,7 +216,9 @@ private struct WindowColumn: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(filtered) { tab in
-                            TabRow(tab: tab, isSelected: selection == tab.id)
+                            TabRow(tab: tab, isSelected: selection == tab.id, onClose: {
+                                closeTab(tab)
+                            })
                                 .id(tab.id)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
@@ -220,8 +241,7 @@ private struct WindowColumn: View {
                                     }
                                     Divider()
                                     Button("Close Tab", role: .destructive) {
-                                        SafariBridge.closeTab(tab)
-                                        store.refresh()
+                                        closeTab(tab)
                                     }
                                 }
                         }
@@ -245,11 +265,26 @@ private struct WindowColumn: View {
     }
 
     private var filtered: [SafariTab] { store.filtered(window) }
+
+    private func closeTab(_ tab: SafariTab) {
+        let visible = filtered
+        let nextID: SafariTab.ID? = {
+            guard let i = visible.firstIndex(where: { $0.id == tab.id }) else { return nil }
+            if i + 1 < visible.count { return visible[i + 1].id }
+            if i - 1 >= 0 { return visible[i - 1].id }
+            return nil
+        }()
+        store.remove(tab.id)
+        if selection == tab.id { selection = nextID }
+        Task.detached { SafariBridge.closeTab(tab) }
+    }
 }
 
 private struct TabRow: View {
     let tab: SafariTab
     let isSelected: Bool
+    let onClose: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -270,6 +305,15 @@ private struct TabRow: View {
                     .truncationMode(.tail)
             }
             Spacer(minLength: 0)
+            if isHovered || isSelected {
+                Button(action: onClose) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(isSelected ? Color.white.opacity(0.9) : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Close Tab")
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
@@ -277,5 +321,6 @@ private struct TabRow: View {
         .cornerRadius(4)
         .padding(.horizontal, 4)
         .padding(.vertical, 1)
+        .onHover { isHovered = $0 }
     }
 }

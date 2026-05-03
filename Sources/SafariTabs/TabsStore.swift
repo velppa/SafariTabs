@@ -34,6 +34,17 @@ final class TabsStore: ObservableObject {
         window.tabs.filter { $0.matches(query) }
     }
 
+    /// Optimistic local removal — drops the tab from the in-memory list so the
+    /// UI updates immediately. Safari's authoritative state is reconciled on
+    /// the next refresh.
+    func remove(_ tabID: SafariTab.ID) {
+        windows = windows.compactMap { window in
+            let kept = window.tabs.filter { $0.id != tabID }
+            guard !kept.isEmpty else { return nil }
+            return SafariWindow(id: window.id, index: window.index, tabs: kept)
+        }
+    }
+
     var totalCount: Int { windows.reduce(0) { $0 + $1.tabs.count } }
 
     var matchCount: Int {
