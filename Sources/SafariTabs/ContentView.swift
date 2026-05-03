@@ -118,29 +118,37 @@ private struct WindowColumn: View {
 
             Divider()
 
-            List(selection: $selection) {
-                ForEach(filtered) { tab in
-                    TabRow(tab: tab)
-                        .tag(tab.id as SafariTab.ID?)
-                        .contentShape(Rectangle())
-                        .onTapGesture(count: 2) {
-                            SafariBridge.activate(tab)
-                        }
-                        .contextMenu {
-                            Button("Activate") { SafariBridge.activate(tab) }
-                            Button("Copy URL") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(tab.url, forType: .string)
+            ScrollViewReader { proxy in
+                List(selection: $selection) {
+                    ForEach(filtered) { tab in
+                        TabRow(tab: tab)
+                            .tag(tab.id as SafariTab.ID?)
+                            .id(tab.id)
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) {
+                                SafariBridge.activate(tab)
                             }
-                            Divider()
-                            Button("Close Tab", role: .destructive) {
-                                SafariBridge.closeTab(tab)
-                                store.refresh()
+                            .contextMenu {
+                                Button("Activate") { SafariBridge.activate(tab) }
+                                Button("Copy URL") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(tab.url, forType: .string)
+                                }
+                                Divider()
+                                Button("Close Tab", role: .destructive) {
+                                    SafariBridge.closeTab(tab)
+                                    store.refresh()
+                                }
                             }
-                        }
+                    }
+                }
+                .listStyle(.plain)
+                .onChange(of: store.query) { _ in
+                    if let first = filtered.first {
+                        proxy.scrollTo(first.id, anchor: .top)
+                    }
                 }
             }
-            .listStyle(.plain)
         }
     }
 
