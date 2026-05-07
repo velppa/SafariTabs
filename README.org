@@ -6,3 +6,25 @@ Inspired by [[https://www.gingerbeardman.com/apps/tabulator/][Tabulator]] app by
 Seal.spoon.
 
 [[./doc/safari-tabs.png]]
+
+* Features
+- Live, auto-refreshing list of every Safari window and tab.
+- Search across titles and URLs.
+- Click a tab to select, double-click (or ⏎) to activate it in Safari.
+- Close tabs in place with the hover ✕ button or ⌘⌫.
+- Keyboard navigation: ⌘1–⌘9 jump to a window column, ←/→ between
+  columns, ↑/↓ between tabs.
+- Drag a window header to reorder swimlanes.
+- Double-click a window header (or use the context menu) to rename it.
+- Auto-sized swimlanes: each column takes 1/3 of the app window,
+  capped at 1/6 of the current display — so a half-screen window
+  always fits 3 columns and a maximised one fits 6, on any resolution.
+- Custom names and column order persist across launches.
+- Silent ~safaritabs://~ URL scheme + CLI for Hammerspoon / Seal.spoon
+  integration (~activate~, ~close~, ~list~).
+
+* Build
+#+begin_src sh
+make app
+open build/SafariTabs.app
+#+end_src

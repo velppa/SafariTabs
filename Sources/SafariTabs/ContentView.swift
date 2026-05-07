@@ -1,8 +1,11 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject var store: TabsStore
     @State private var selection: SafariTab.ID?
+    @State private var renamingWindowID: Int?
+    @State private var draggingWindowID: Int?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -50,18 +53,31 @@ struct ContentView: View {
     }
 
     private var columns: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 0) {
-                    ForEach(Array(store.windows.enumerated()), id: \.element.id) { idx, window in
-                        WindowColumn(window: window, columnNumber: idx + 1, selection: $selection)
-                            .frame(width: 320)
+        GeometryReader { geo in
+            // Each swimlane is 1/3 of the active window width, capped at
+            // 1/6 of the current display so a maximized window fits 6
+            // swimlanes and a half-screen window fits 3 — on any resolution.
+            let screenW = NSScreen.main?.frame.width ?? 1920
+            let columnWidth = max(220, min(geo.size.width / 3, screenW / 6))
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 0) {
+                        ForEach(Array(store.displayWindows.enumerated()), id: \.element.id) { idx, window in
+                            WindowColumn(
+                                window: window,
+                                columnNumber: idx + 1,
+                                selection: $selection,
+                                renamingWindowID: $renamingWindowID,
+                                draggingWindowID: $draggingWindowID
+                            )
+                            .frame(width: columnWidth)
                             .id(window.id)
-                        Divider()
+                            Divider()
+                        }
                     }
                 }
+                .background(shortcuts(proxy: proxy))
             }
-            .background(shortcuts(proxy: proxy))
         }
     }
 
@@ -97,7 +113,7 @@ struct ContentView: View {
                let win = store.windows.first(where: { $0.tabs.contains(where: { $0.id == sel }) }) {
                 return (win, store.filtered(win))
             }
-            let first = store.windows[0]
+            let first = store.displayWindows[0]
             return (first, store.filtered(first))
         }()
         guard let (_, tabs) = windowAndTabs, !tabs.isEmpty else { return }
@@ -107,15 +123,16 @@ struct ContentView: View {
     }
 
     private func moveColumn(by delta: Int, proxy: ScrollViewProxy) {
-        guard !store.windows.isEmpty else { return }
+        let display = store.displayWindows
+        guard !display.isEmpty else { return }
         let currentIdx: Int = {
             if let sel = selection,
-               let i = store.windows.firstIndex(where: { $0.tabs.contains(where: { $0.id == sel }) }) {
+               let i = display.firstIndex(where: { $0.tabs.contains(where: { $0.id == sel }) }) {
                 return i
             }
             return 0
         }()
-        let nextIdx = max(0, min(store.windows.count - 1, currentIdx + delta))
+        let nextIdx = max(0, min(display.count - 1, currentIdx + delta))
         focusWindow(nextIdx + 1, proxy: proxy)
     }
 
@@ -144,8 +161,9 @@ struct ContentView: View {
     }
 
     private func focusWindow(_ n: Int, proxy: ScrollViewProxy) {
-        guard n >= 1, n <= store.windows.count else { return }
-        let window = store.windows[n - 1]
+        let display = store.displayWindows
+        guard n >= 1, n <= display.count else { return }
+        let window = display[n - 1]
         if let firstTab = store.filtered(window).first ?? window.tabs.first {
             selection = firstTab.id
         }
@@ -190,81 +208,151 @@ private struct WindowColumn: View {
     let window: SafariWindow
     let columnNumber: Int
     @Binding var selection: SafariTab.ID?
+    @Binding var renamingWindowID: Int?
+    @Binding var draggingWindowID: Int?
     @EnvironmentObject var store: TabsStore
     @State private var lastClick: (id: SafariTab.ID, at: Date)?
+    @State private var renameText: String = ""
+    @State private var isDropTarget: Bool = false
+    @FocusState private var renameFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Text("⌘\(columnNumber)")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                Text("Window \(columnNumber)")
-                    .font(.system(size: 12, weight: .semibold))
-                Spacer()
-                Text("\(filtered.count)")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color(nsColor: .controlBackgroundColor))
-
+            header
             Divider()
+            tabList
+        }
+        .opacity(draggingWindowID == window.id ? 0.4 : 1.0)
+        .overlay(alignment: .leading) {
+            if isDropTarget {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(width: 2)
+            }
+        }
+        .onDrop(
+            of: [UTType.text],
+            delegate: WindowDropDelegate(
+                targetID: window.id,
+                store: store,
+                isTargeted: $isDropTarget,
+                draggingWindowID: $draggingWindowID
+            )
+        )
+    }
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(filtered) { tab in
-                            TabRow(tab: tab, isSelected: selection == tab.id, onClose: {
-                                closeTab(tab)
-                            })
-                                .id(tab.id)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    let now = Date()
-                                    if let last = lastClick,
-                                       last.id == tab.id,
-                                       now.timeIntervalSince(last.at) < 0.4 {
-                                        SafariBridge.activate(tab)
-                                        lastClick = nil
-                                    } else {
-                                        selection = tab.id
-                                        lastClick = (tab.id, now)
-                                    }
+    private var header: some View {
+        HStack(spacing: 6) {
+            Text("⌘\(columnNumber)")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(.tertiary)
+            if renamingWindowID == window.id {
+                TextField("", text: $renameText, onCommit: commitRename)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .focused($renameFocused)
+                    .onAppear {
+                        renameText = store.displayName(for: window)
+                        renameFocused = true
+                    }
+                    .onExitCommand { cancelRename() }
+                    .onSubmit { commitRename() }
+            } else {
+                Text(store.displayName(for: window))
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .onTapGesture(count: 2) { beginRename() }
+            }
+            Spacer()
+            Text("\(filtered.count)")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("Rename Window") { beginRename() }
+            if store.displayName(for: window) != "Window \(window.index)" {
+                Button("Reset Name") { store.rename(window.id, to: "") }
+            }
+        }
+        .onDrag {
+            draggingWindowID = window.id
+            return NSItemProvider(object: "\(window.id)" as NSString)
+        }
+    }
+
+    private var tabList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(filtered) { tab in
+                        TabRow(tab: tab, isSelected: selection == tab.id, onClose: {
+                            closeTab(tab)
+                        })
+                            .id(tab.id)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                let now = Date()
+                                if let last = lastClick,
+                                   last.id == tab.id,
+                                   now.timeIntervalSince(last.at) < 0.4 {
+                                    SafariBridge.activate(tab)
+                                    lastClick = nil
+                                } else {
+                                    selection = tab.id
+                                    lastClick = (tab.id, now)
                                 }
-                                .contextMenu {
-                                    Button("Activate") { SafariBridge.activate(tab) }
-                                    Button("Copy URL") {
-                                        NSPasteboard.general.clearContents()
-                                        NSPasteboard.general.setString(tab.url, forType: .string)
-                                    }
-                                    Divider()
-                                    Button("Close Tab", role: .destructive) {
-                                        closeTab(tab)
-                                    }
+                            }
+                            .contextMenu {
+                                Button("Activate") { SafariBridge.activate(tab) }
+                                Button("Copy URL") {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(tab.url, forType: .string)
                                 }
-                        }
+                                Divider()
+                                Button("Close Tab", role: .destructive) {
+                                    closeTab(tab)
+                                }
+                            }
                     }
                 }
-                .onChange(of: store.query) { _ in
-                    if let first = filtered.first {
-                        proxy.scrollTo(first.id, anchor: .top)
-                    }
+            }
+            .onChange(of: store.query) { _ in
+                if let first = filtered.first {
+                    proxy.scrollTo(first.id, anchor: .top)
                 }
-                .onChange(of: selection) { newValue in
-                    guard let id = newValue,
-                          filtered.contains(where: { $0.id == id })
-                    else { return }
-                    withAnimation(.easeOut(duration: 0.1)) {
-                        proxy.scrollTo(id, anchor: .center)
-                    }
+            }
+            .onChange(of: selection) { newValue in
+                guard let id = newValue,
+                      filtered.contains(where: { $0.id == id })
+                else { return }
+                withAnimation(.easeOut(duration: 0.1)) {
+                    proxy.scrollTo(id, anchor: .center)
                 }
             }
         }
     }
 
     private var filtered: [SafariTab] { store.filtered(window) }
+
+    private func beginRename() {
+        renameText = store.displayName(for: window)
+        renamingWindowID = window.id
+    }
+
+    private func commitRename() {
+        guard renamingWindowID == window.id else { return }
+        store.rename(window.id, to: renameText)
+        renamingWindowID = nil
+    }
+
+    private func cancelRename() {
+        renamingWindowID = nil
+    }
 
     private func closeTab(_ tab: SafariTab) {
         let visible = filtered
@@ -277,6 +365,39 @@ private struct WindowColumn: View {
         store.remove(tab.id)
         if selection == tab.id { selection = nextID }
         Task.detached { SafariBridge.closeTab(tab) }
+    }
+}
+
+private struct WindowDropDelegate: DropDelegate {
+    let targetID: Int
+    let store: TabsStore
+    @Binding var isTargeted: Bool
+    @Binding var draggingWindowID: Int?
+
+    func dropEntered(info: DropInfo) {
+        guard let src = draggingWindowID, src != targetID else { return }
+        isTargeted = true
+    }
+
+    func dropExited(info: DropInfo) {
+        isTargeted = false
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        isTargeted = false
+        guard let provider = info.itemProviders(for: [UTType.text]).first else { return false }
+        provider.loadObject(ofClass: NSString.self) { obj, _ in
+            guard let s = obj as? String, let src = Int(s) else { return }
+            Task { @MainActor in
+                store.moveWindow(sourceID: src, before: targetID)
+                draggingWindowID = nil
+            }
+        }
+        return true
     }
 }
 
