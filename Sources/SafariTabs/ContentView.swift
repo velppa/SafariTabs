@@ -155,9 +155,8 @@ struct ContentView: View {
             if i - 1 >= 0 { return visible[i - 1].id }
             return nil
         }()
-        store.remove(tab.id)
         selection = nextID
-        Task.detached { SafariBridge.closeTab(tab) }
+        store.close(tab)
     }
 
     private func focusWindow(_ n: Int, proxy: ScrollViewProxy) {
@@ -362,9 +361,8 @@ private struct WindowColumn: View {
             if i - 1 >= 0 { return visible[i - 1].id }
             return nil
         }()
-        store.remove(tab.id)
         if selection == tab.id { selection = nextID }
-        Task.detached { SafariBridge.closeTab(tab) }
+        store.close(tab)
     }
 }
 

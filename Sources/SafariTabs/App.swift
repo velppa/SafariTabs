@@ -107,8 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "close":
             guard let target = queryURL else { return }
             let s = store
-            Task { @MainActor in s?.removeByURL(target) }
-            Task.detached { SafariBridge.closeTab(url: target) }
+            Task { @MainActor in s?.closeByURL(target) }
         case "list":
             let outPath = comps?.queryItems?.first(where: { $0.name == "out" })?.value
                 ?? URLActions.defaultListPath
