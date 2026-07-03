@@ -67,13 +67,18 @@ enum SafariBridge {
             log("activate: no match in fresh fetch — aborting")
             return
         }
-        log("activate: matched freshW=\(fresh.windowIndex) freshT=\(fresh.tabIndex)")
-        // Set the target tab and bring its window to the front *before* `activate`,
-        // so the OS-level app switch can't race with a Safari window restoration.
+        log("activate: matched freshW=\(fresh.windowIndex) freshT=\(fresh.tabIndex) winID=\(fresh.windowID)")
+        // Address the window by its stable id, not its z-order index. And
+        // `set index to 1` only reorders the AppleScript list — on `activate`
+        // macOS still fronts Safari's last-focused window, so activating a tab
+        // in another window brought the wrong window forward. Cycling
+        // `visible` is the one scripting hook that actually makes the target
+        // window key.
         let script = """
         tell application "Safari"
-            set current tab of window \(fresh.windowIndex) to tab \(fresh.tabIndex) of window \(fresh.windowIndex)
-            set index of window \(fresh.windowIndex) to 1
+            set current tab of window id \(fresh.windowID) to tab \(fresh.tabIndex) of window id \(fresh.windowID)
+            set visible of window id \(fresh.windowID) to false
+            set visible of window id \(fresh.windowID) to true
             activate
         end tell
         """
