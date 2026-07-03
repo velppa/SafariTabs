@@ -216,6 +216,8 @@ private struct WindowColumn: View {
     @EnvironmentObject var store: TabsStore
     @State private var lastClick: (id: SafariTab.ID, at: Date)?
     @State private var renameText: String = ""
+    /// Custom name at the moment renaming began, so Escape can restore it.
+    @State private var renameOriginal: String = ""
     @State private var isDropTarget: Bool = false
     @FocusState private var renameFocused: Bool
 
@@ -257,6 +259,15 @@ private struct WindowColumn: View {
                     .onAppear {
                         renameText = store.displayName(for: window)
                         renameFocused = true
+                    }
+                    // Save as the user types: clicking elsewhere mid-edit
+                    // must not lose the new name.
+                    .onChange(of: renameText) { text in
+                        guard renamingWindowID == window.id else { return }
+                        store.rename(window.id, to: text)
+                    }
+                    .onChange(of: renameFocused) { focused in
+                        if !focused { commitRename() }
                     }
                     .onExitCommand { cancelRename() }
                     .onSubmit { commitRename() }
@@ -349,6 +360,7 @@ private struct WindowColumn: View {
     private var filtered: [SafariTab] { store.filtered(window) }
 
     private func beginRename() {
+        renameOriginal = store.customNames[window.id] ?? ""
         renameText = store.displayName(for: window)
         renamingWindowID = window.id
     }
@@ -360,6 +372,8 @@ private struct WindowColumn: View {
     }
 
     private func cancelRename() {
+        guard renamingWindowID == window.id else { return }
+        store.rename(window.id, to: renameOriginal)
         renamingWindowID = nil
     }
 
