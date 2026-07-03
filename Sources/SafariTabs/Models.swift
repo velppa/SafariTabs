@@ -6,8 +6,14 @@ struct SafariTab: Identifiable, Hashable {
     let tabIndex: Int
     let title: String
     let url: String
+    /// Which duplicate of this URL within its window this tab is (0-based).
+    /// Part of identity so two tabs on the same page stay distinct.
+    let occurrence: Int
 
-    var id: String { "\(windowID):\(tabIndex)" }
+    /// Identity must survive index shifts: closing a tab renumbers every tab
+    /// below it, and index-based ids would make SwiftUI recreate those rows
+    /// (visible as flicker instead of a smooth removal).
+    var id: String { "\(windowID)|\(url)#\(occurrence)" }
 
     var domain: String {
         guard let host = URL(string: url)?.host else { return url }

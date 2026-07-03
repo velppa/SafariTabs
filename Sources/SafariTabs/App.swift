@@ -5,7 +5,7 @@ import AppKit
 enum Main {
     static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
-        if let first = args.first, ["activate", "close", "list"].contains(first) {
+        if let first = args.first, ["activate", "close", "list", "self-test"].contains(first) {
             CLI.run(args)
             return
         }
@@ -64,6 +64,8 @@ enum CLI {
             let path = args.count >= 2 ? args[1] : URLActions.defaultListPath
             URLActions.writeTabList(to: path)
             print(path)
+        case "self-test":
+            SelfTest.run()
         default:
             FileHandle.standardError.write(Data("unknown command: \(cmd)\n".utf8))
             exit(2)

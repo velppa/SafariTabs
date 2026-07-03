@@ -27,6 +27,7 @@ enum SafariBridge {
         for w in 1...descriptor.numberOfItems {
             guard let tabsDesc = descriptor.atIndex(w), tabsDesc.numberOfItems > 0 else { continue }
             var tabs: [SafariTab] = []
+            var urlCounts: [String: Int] = [:]
             for t in 1...tabsDesc.numberOfItems {
                 guard
                     let row = tabsDesc.atIndex(t),
@@ -37,12 +38,15 @@ enum SafariBridge {
                     let wIdxStr = row.atIndex(4)?.stringValue, let wIdx = Int(wIdxStr),
                     let tIdxStr = row.atIndex(5)?.stringValue, let tIdx = Int(tIdxStr)
                 else { continue }
+                let occurrence = urlCounts[url, default: 0]
+                urlCounts[url] = occurrence + 1
                 tabs.append(SafariTab(
                     windowID: wID,
                     windowIndex: wIdx,
                     tabIndex: tIdx,
                     title: title,
-                    url: url
+                    url: url,
+                    occurrence: occurrence
                 ))
             }
             if let first = tabs.first {
@@ -76,18 +80,21 @@ enum SafariBridge {
         _ = run(script)
     }
 
-    /// Close a specific tab.
-    static func closeTab(_ tab: SafariTab) {
+    /// Close a specific tab. Returns false when the tab could not be found
+    /// or the close script failed, so callers can drop their optimistic state
+    /// instead of leaving a phantom that pops back later.
+    @discardableResult
+    static func closeTab(_ tab: SafariTab) -> Bool {
         guard let fresh = locate(tab) else {
             log("closeTab: no match for url=\(tab.url) title=\(tab.title)")
-            return
+            return false
         }
         let script = """
         tell application "Safari"
             close tab \(fresh.tabIndex) of window \(fresh.windowIndex)
         end tell
         """
-        _ = run(script)
+        return run(script) != nil
     }
 
     /// Activate the first Safari tab whose URL matches.
@@ -117,19 +124,36 @@ enum SafariBridge {
     }
 
     /// Re-fetch Safari and find the current windowIndex/tabIndex for the given tab.
+    /// Ranks candidates instead of taking the first URL hit, so when the same
+    /// page is open in several tabs we act on the one the user pointed at
+    /// (same window, same position) rather than an arbitrary twin.
     private static func locate(_ tab: SafariTab) -> SafariTab? {
         let windows = fetchWindows()
         let all = windows.flatMap { $0.tabs }
         log("locate: fresh fetch has \(windows.count) windows, \(all.count) tabs")
-        if let exact = all.first(where: { $0.url == tab.url && $0.title == tab.title }) {
-            return exact
+        let byURL = all.filter { $0.url == tab.url }
+        if let best = byURL.max(by: { score($0, against: tab) < score($1, against: tab) }) {
+            if best.title != tab.title { log("locate: URL match (title differed)") }
+            return best
         }
-        if let urlOnly = all.first(where: { $0.url == tab.url }) {
-            log("locate: URL-only match (title differed)")
-            return urlOnly
+        // The page may have navigated since our fetch; fall back to the tab
+        // sitting at the remembered position if at least the title agrees.
+        if let sameSlot = all.first(where: {
+            $0.windowID == tab.windowID && $0.tabIndex == tab.tabIndex && $0.title == tab.title
+        }) {
+            log("locate: positional match (URL changed)")
+            return sameSlot
         }
         log("locate: no match. Fresh URLs: \(all.map { $0.url }.prefix(20))")
         return nil
+    }
+
+    private static func score(_ candidate: SafariTab, against tab: SafariTab) -> Int {
+        var s = 0
+        if candidate.windowID == tab.windowID { s += 4 }
+        if candidate.tabIndex == tab.tabIndex { s += 2 }
+        if candidate.title == tab.title { s += 1 }
+        return s
     }
 
     private static let logURL: URL = {
