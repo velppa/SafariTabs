@@ -155,8 +155,12 @@ struct ContentView: View {
             if i - 1 >= 0 { return visible[i - 1].id }
             return nil
         }()
-        selection = nextID
-        store.close(tab)
+        // Move the selection in the same transaction as the removal, so the
+        // highlight rides the row sliding up instead of jumping first.
+        withAnimation(.easeOut(duration: 0.15)) {
+            selection = nextID
+            store.close(tab)
+        }
     }
 
     private func focusWindow(_ n: Int, proxy: ScrollViewProxy) {
@@ -287,7 +291,10 @@ private struct WindowColumn: View {
     private var tabList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 0) {
+                // Plain VStack: lazy containers skip removal transitions, so
+                // deleting a middle row made the rows below jump instead of
+                // slide. Row counts are small enough to render eagerly.
+                VStack(spacing: 0) {
                     ForEach(filtered) { tab in
                         TabRow(tab: tab, isSelected: selection == tab.id, onClose: {
                             closeTab(tab)
@@ -329,8 +336,11 @@ private struct WindowColumn: View {
                 guard let id = newValue,
                       filtered.contains(where: { $0.id == id })
                 else { return }
+                // nil anchor scrolls the minimum needed and is a no-op when
+                // the row is already visible — re-centering on every selection
+                // change made the list lurch when a close moved the selection.
                 withAnimation(.easeOut(duration: 0.1)) {
-                    proxy.scrollTo(id, anchor: .center)
+                    proxy.scrollTo(id, anchor: nil)
                 }
             }
         }
@@ -361,8 +371,10 @@ private struct WindowColumn: View {
             if i - 1 >= 0 { return visible[i - 1].id }
             return nil
         }()
-        if selection == tab.id { selection = nextID }
-        store.close(tab)
+        withAnimation(.easeOut(duration: 0.15)) {
+            if selection == tab.id { selection = nextID }
+            store.close(tab)
+        }
     }
 }
 
