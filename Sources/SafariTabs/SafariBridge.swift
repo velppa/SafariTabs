@@ -170,7 +170,9 @@ enum SafariBridge {
 
     private static func log(_ msg: String) {
         let line = "[\(Date())] \(msg)\n"
-        NSLog("SafariTabs: \(msg)")
+        // Tab titles and URLs routinely contain "%" sequences; never let them
+        // reach NSLog as the format string or it parses them as specifiers.
+        NSLog("%@", "SafariTabs: \(msg)")
         if let data = line.data(using: .utf8) {
             if let handle = try? FileHandle(forWritingTo: logURL) {
                 defer { try? handle.close() }
@@ -188,7 +190,7 @@ enum SafariBridge {
         var error: NSDictionary?
         let result = script.executeAndReturnError(&error)
         if let error {
-            NSLog("SafariBridge AppleScript error: \(error)")
+            NSLog("%@", "SafariBridge AppleScript error: \(error)")
             return nil
         }
         return result
