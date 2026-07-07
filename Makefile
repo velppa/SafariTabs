@@ -16,6 +16,7 @@ app: build
 	mkdir -p $(BUNDLE)/Contents/Resources
 	cp $(BIN) $(BUNDLE)/Contents/MacOS/$(APP_NAME)
 	cp Resources/Info.plist $(BUNDLE)/Contents/Info.plist
+	/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist) ($$(date '+%Y-%m-%d %H:%M'))" $(BUNDLE)/Contents/Info.plist
 	cp Resources/AppIcon.icns $(BUNDLE)/Contents/Resources/AppIcon.icns
 	codesign --force --deep --sign - $(BUNDLE)
 	@echo "Built $(BUNDLE)"
