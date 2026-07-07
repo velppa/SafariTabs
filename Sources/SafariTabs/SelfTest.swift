@@ -85,6 +85,20 @@ enum SelfTest {
             expect(first.id != second.id, "duplicate URLs have distinct ids")
         }
 
+        // Startup order: windows sort by display name — custom name when set,
+        // "Window N" fallback otherwise — with numeric-aware comparison.
+        do {
+            let wins = [
+                window(3, [tab(3, 1, "https://c.com")]),
+                window(1, [tab(1, 1, "https://a.com")]),
+                window(2, [tab(2, 1, "https://b.com")]),
+                window(10, [tab(10, 1, "https://d.com")]),
+            ]
+            let ids = TabsStore.nameSortedIDs(wins, customNames: [3: "Alpha", 2: "beta"])
+            // Alpha(3), beta(2), Window 1(1), Window 10(10)
+            expect(ids == [3, 2, 1, 10], "startup sort by name, case-insensitive, numeric-aware")
+        }
+
         if failures.isEmpty {
             print("self-test: all checks passed")
             exit(0)

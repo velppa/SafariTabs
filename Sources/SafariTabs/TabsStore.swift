@@ -11,6 +11,11 @@ final class TabsStore: ObservableObject {
 
     private var timer: Timer?
 
+    /// The persisted drag order is intentionally discarded once per launch:
+    /// the board starts alphabetized, and manual reordering takes over from
+    /// there until the next launch.
+    private var needsStartupSort = true
+
     /// Tabs the user just closed, with the time we issued the close.
     /// A periodic refresh can snapshot Safari before the async close commits;
     /// without this the closed tab would momentarily reappear. We filter these
@@ -55,6 +60,11 @@ final class TabsStore: ObservableObject {
                     if pruned != self.windows {
                         withAnimation(.easeOut(duration: 0.15)) {
                             self.windows = pruned
+                        }
+                        if self.needsStartupSort, !pruned.isEmpty {
+                            self.needsStartupSort = false
+                            self.orderedWindowIDs = Self.nameSortedIDs(pruned, customNames: self.customNames)
+                            self.persistOrder()
                         }
                         self.reconcileOrder()
                     }
@@ -111,6 +121,19 @@ final class TabsStore: ObservableObject {
             out.append(w)
         }
         return out
+    }
+
+    /// Window IDs ordered by display name (custom name when set, "Window N"
+    /// fallback), compared the way Finder sorts: case-insensitive and
+    /// numeric-aware, so "Window 2" precedes "Window 10".
+    nonisolated static func nameSortedIDs(_ windows: [SafariWindow], customNames: [Int: String]) -> [Int] {
+        func name(_ w: SafariWindow) -> String {
+            if let custom = customNames[w.id], !custom.isEmpty { return custom }
+            return "Window \(w.index)"
+        }
+        return windows
+            .sorted { name($0).localizedStandardCompare(name($1)) == .orderedAscending }
+            .map(\.id)
     }
 
     func displayName(for window: SafariWindow) -> String {
