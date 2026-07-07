@@ -48,10 +48,27 @@ final class TabsStore: ObservableObject {
         }
     }
 
+    /// Activate a tab in Safari. Always dispatched off the main thread:
+    /// the AppleEvent blocks until Safari replies, and a busy Safari would
+    /// otherwise beachball this app along with it.
+    func activate(_ tab: SafariTab) {
+        Task.detached(priority: .userInitiated) {
+            SafariBridge.activate(tab)
+        }
+    }
+
+    /// One fetch in flight at a time. AppleScript serializes all calls on a
+    /// process-global lock, so when Safari stalls, a fetch per poll tick
+    /// piles up threads that all wedge on that lock.
+    private var refreshInFlight = false
+
     func refresh() {
+        guard !refreshInFlight else { return }
+        refreshInFlight = true
         Task.detached(priority: .userInitiated) {
             let result = SafariBridge.fetchWindows()
             await MainActor.run {
+                self.refreshInFlight = false
                 let pruned = self.applyPendingCloses(result)
                 if !pruned.isEmpty || self.windows.isEmpty {
                     // Assign only on real change: the 5s poll usually returns

@@ -186,7 +186,15 @@ enum SafariBridge {
 
     @discardableResult
     private static func run(_ source: String) -> NSAppleEventDescriptor? {
-        guard let script = NSAppleScript(source: source) else { return nil }
+        // Bound the wait for Safari's AppleEvent reply. The default is to
+        // wait indefinitely, and a stalled Safari then wedges every caller
+        // behind AppleScript's process-global lock.
+        let bounded = """
+        with timeout of 5 seconds
+        \(source)
+        end timeout
+        """
+        guard let script = NSAppleScript(source: bounded) else { return nil }
         var error: NSDictionary?
         let result = script.executeAndReturnError(&error)
         if let error {

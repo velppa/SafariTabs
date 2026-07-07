@@ -140,7 +140,7 @@ struct ContentView: View {
         guard let sel = selection,
               let tab = store.windows.flatMap({ $0.tabs }).first(where: { $0.id == sel })
         else { return }
-        SafariBridge.activate(tab)
+        store.activate(tab)
     }
 
     private func closeSelected() {
@@ -317,7 +317,7 @@ private struct WindowColumn: View {
                                 if let last = lastClick,
                                    last.id == tab.id,
                                    now.timeIntervalSince(last.at) < 0.4 {
-                                    SafariBridge.activate(tab)
+                                    store.activate(tab)
                                     lastClick = nil
                                 } else {
                                     selection = tab.id
@@ -325,7 +325,7 @@ private struct WindowColumn: View {
                                 }
                             }
                             .contextMenu {
-                                Button("Activate") { SafariBridge.activate(tab) }
+                                Button("Activate") { store.activate(tab) }
                                 Button("Copy URL") {
                                     NSPasteboard.general.clearContents()
                                     NSPasteboard.general.setString(tab.url, forType: .string)
