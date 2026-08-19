@@ -25,19 +25,38 @@ enum SelfTest {
     }
 
     static func run() -> Never {
-        // Closing one of two same-URL tabs in a window must hide exactly
-        // one, not both.
+        // A fetch that still shows both twins is corrected down to the
+        // expected count: exactly one hidden, the earlier twin survives.
         do {
             let wins = [window(1, [
                 tab(1, 1, "https://a.com", occurrence: 0),
                 tab(1, 2, "https://a.com", occurrence: 1),
                 tab(1, 3, "https://b.com"),
             ])]
-            let pruned = TabsStore.prune(
-                wins, pending: [.init(windowID: 1, url: "https://a.com", at: Date())])
-            expect(pruned[0].tabs.count == 2, "prune removes single occurrence")
+            let (pruned, still) = TabsStore.prune(
+                wins,
+                pending: [.init(windowID: 1, url: "https://a.com",
+                                expectedRemaining: 1, at: Date())])
+            expect(pruned[0].tabs.count == 2, "prune hides single surplus tab")
             expect(pruned[0].tabs.filter { $0.url == "https://a.com" }.count == 1,
                    "one duplicate survives")
+            expect(pruned[0].tabs.first?.occurrence == 0, "earlier twin kept")
+            expect(still.count == 1, "unconfirmed tombstone kept")
+        }
+
+        // A fetch that already reflects the close must not eat the surviving
+        // twin, and the confirmed tombstone retires.
+        do {
+            let wins = [window(1, [
+                tab(1, 1, "https://a.com", occurrence: 0),
+                tab(1, 2, "https://b.com"),
+            ])]
+            let (pruned, still) = TabsStore.prune(
+                wins,
+                pending: [.init(windowID: 1, url: "https://a.com",
+                                expectedRemaining: 1, at: Date())])
+            expect(pruned[0].tabs.count == 2, "confirmed close hides nothing")
+            expect(still.isEmpty, "confirmed tombstone retired")
         }
 
         // A tombstone in window 1 must not hide the same URL open in window 2.
@@ -46,14 +65,17 @@ enum SelfTest {
                 window(1, [tab(1, 1, "https://a.com")]),
                 window(2, [tab(2, 1, "https://a.com"), tab(2, 2, "https://b.com")]),
             ]
-            let pruned = TabsStore.prune(
-                wins, pending: [.init(windowID: 1, url: "https://a.com", at: Date())])
+            let (pruned, _) = TabsStore.prune(
+                wins,
+                pending: [.init(windowID: 1, url: "https://a.com",
+                                expectedRemaining: 0, at: Date())])
             expect(pruned.count == 1, "emptied window dropped")
             expect(pruned.first?.id == 2, "other window kept")
             expect(pruned.first?.tabs.count == 2, "twin URL in other window kept")
         }
 
-        // Two tombstones for the same URL hide two occurrences.
+        // Two quick closes of the same URL: the lower expectation wins and
+        // the fetch is corrected down to it.
         do {
             let wins = [window(1, [
                 tab(1, 1, "https://a.com", occurrence: 0),
@@ -61,12 +83,12 @@ enum SelfTest {
                 tab(1, 3, "https://b.com"),
             ])]
             let pending: [TabsStore.PendingClose] = [
-                .init(windowID: 1, url: "https://a.com", at: Date()),
-                .init(windowID: 1, url: "https://a.com", at: Date()),
+                .init(windowID: 1, url: "https://a.com", expectedRemaining: 1, at: Date()),
+                .init(windowID: 1, url: "https://a.com", expectedRemaining: 0, at: Date()),
             ]
-            let pruned = TabsStore.prune(wins, pending: pending)
+            let (pruned, _) = TabsStore.prune(wins, pending: pending)
             expect(pruned.first?.tabs.map(\.url) == ["https://b.com"],
-                   "two tombstones hide two occurrences")
+                   "two closes hide both twins")
         }
 
         // Tab identity must not depend on tabIndex: closing a tab above
@@ -97,6 +119,15 @@ enum SelfTest {
             let ids = TabsStore.nameSortedIDs(wins, customNames: [3: "Alpha", 2: "beta"])
             // Alpha(3), beta(2), Window 1(1), Window 10(10)
             expect(ids == [3, 2, 1, 10], "startup sort by name, case-insensitive, numeric-aware")
+        }
+
+        // URLs are embedded in AppleScript string literals; quotes and
+        // backslashes must survive the trip.
+        do {
+            expect(SafariBridge.escape(#"a"b\c"#) == #"a\"b\\c"#,
+                   "escape quotes and backslashes for AppleScript")
+            expect(SafariBridge.escape("https://a.com/?q=1") == "https://a.com/?q=1",
+                   "plain URL unchanged")
         }
 
         if failures.isEmpty {

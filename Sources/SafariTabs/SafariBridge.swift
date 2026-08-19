@@ -85,21 +85,56 @@ enum SafariBridge {
         _ = run(script)
     }
 
-    /// Close a specific tab. Returns false when the tab could not be found
-    /// or the close script failed, so callers can drop their optimistic state
-    /// instead of leaving a phantom that pops back later.
+    /// What a close request actually did. `unknown` means Safari never
+    /// replied (timeout) — the close may or may not have landed, so the
+    /// caller must reconcile against a fresh fetch instead of assuming
+    /// failure and re-closing a twin.
+    enum CloseOutcome {
+        case closed, notFound, unknown
+    }
+
+    /// Close a specific tab.
     @discardableResult
-    static func closeTab(_ tab: SafariTab) -> Bool {
-        guard let fresh = locate(tab) else {
-            log("closeTab: no match for url=\(tab.url) title=\(tab.title)")
-            return false
-        }
+    static func closeTab(_ tab: SafariTab) -> CloseOutcome {
+        close(windowID: tab.windowID, url: tab.url, occurrence: tab.occurrence)
+    }
+
+    /// Close one occurrence of a URL in a specific window, in a single
+    /// AppleScript round-trip. Matching and closing inside one script
+    /// removes the fetch-then-close-by-index race, and the window is
+    /// addressed by its stable id, never by z-order. `occurrence` is
+    /// 0-based; when fewer twins remain than remembered (an earlier one
+    /// already closed and renumbered the rest), the last match is closed —
+    /// twins show the same page, so any of them satisfies the request.
+    static func close(windowID: Int, url: String, occurrence: Int) -> CloseOutcome {
         let script = """
         tell application "Safari"
-            close tab \(fresh.tabIndex) of window \(fresh.windowIndex)
+            set matchIdx to {}
+            repeat with t from 1 to count of tabs of window id \(windowID)
+                if (URL of tab t of window id \(windowID)) as text is "\(escape(url))" then
+                    set end of matchIdx to t
+                end if
+            end repeat
+            if (count of matchIdx) is 0 then return "notfound"
+            set target to \(occurrence + 1)
+            if target > (count of matchIdx) then set target to (count of matchIdx)
+            close tab (item target of matchIdx) of window id \(windowID)
+            return "closed"
         end tell
         """
-        return run(script) != nil
+        guard let result = run(script) else {
+            log("close: no reply for url=\(url) win=\(windowID) occ=\(occurrence)")
+            return .unknown
+        }
+        let outcome: CloseOutcome = result.stringValue == "closed" ? .closed : .notFound
+        log("close: \(outcome) url=\(url) win=\(windowID) occ=\(occurrence)")
+        return outcome
+    }
+
+    /// Escape a string for embedding in an AppleScript string literal.
+    static func escape(_ s: String) -> String {
+        s.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
     }
 
     /// Activate the first Safari tab whose URL matches.
@@ -120,8 +155,7 @@ enum SafariBridge {
             log("closeTab(url:) no match for \(url)")
             return false
         }
-        closeTab(tab)
-        return true
+        return closeTab(tab) != .notFound
     }
 
     private static func findByURL(_ url: String) -> SafariTab? {

@@ -18,16 +18,18 @@ final class TabsStore: ObservableObject {
 
     /// Tabs the user just closed, with the time we issued the close.
     /// A periodic refresh can snapshot Safari before the async close commits;
-    /// without this the closed tab would momentarily reappear. We filter these
-    /// out of every fetch until Safari confirms (the tab drops out on its own)
-    /// or the grace window lapses.
+    /// without this the closed tab would momentarily reappear.
     ///
-    /// Scoped to a window and consuming one occurrence each: a bare URL set
-    /// would also hide an unrelated tab that happens to show the same page,
-    /// which then "reappears" when the tombstone expires.
+    /// `expectedRemaining` is how many tabs with this URL the window should
+    /// hold once the close commits. A fetch is only corrected down to that
+    /// number — hiding a fixed count instead would eat a surviving twin
+    /// whenever the fetch already reflects the close. Once a fetch shows the
+    /// expected number, Safari has confirmed and the tombstone is dropped;
+    /// the grace window is the fallback for a close that never commits.
     struct PendingClose {
         let windowID: Int
         let url: String
+        let expectedRemaining: Int
         let at: Date
     }
 
@@ -91,32 +93,57 @@ final class TabsStore: ObservableObject {
         }
     }
 
-    /// Drop tabs the user just closed from a fresh fetch, and purge tombstones
-    /// once they expire (the close has long since committed by then).
+    /// Drop tabs the user just closed from a fresh fetch. Tombstones Safari
+    /// has confirmed are retired; unconfirmed ones expire with the grace.
     private func applyPendingCloses(_ wins: [SafariWindow]) -> [SafariWindow] {
         let now = Date()
         pendingCloses = pendingCloses.filter { now.timeIntervalSince($0.at) < closeGrace }
-        return Self.prune(wins, pending: pendingCloses)
+        let (pruned, still) = Self.prune(wins, pending: pendingCloses)
+        pendingCloses = still
+        return pruned
     }
 
-    /// Remove, per tombstone, one tab with the matching URL from the matching
-    /// window. Windows left empty are dropped.
-    nonisolated static func prune(_ wins: [SafariWindow], pending: [PendingClose]) -> [SafariWindow] {
-        guard !pending.isEmpty else { return wins }
-        var budget: [String: Int] = [:]
+    /// Correct a fresh fetch down to each tombstone's expected tab count:
+    /// hide only the surplus over `expectedRemaining`, never a fixed count,
+    /// so a fetch that already reflects the close hides nothing. Surplus is
+    /// hidden from the tail, keeping the surviving twins' ids (and rows)
+    /// stable. Windows left empty are dropped. Returns the corrected windows
+    /// and the tombstones not yet confirmed by this fetch.
+    nonisolated static func prune(
+        _ wins: [SafariWindow], pending: [PendingClose]
+    ) -> ([SafariWindow], [PendingClose]) {
+        guard !pending.isEmpty else { return (wins, pending) }
+        var expected: [String: Int] = [:]
         for p in pending {
-            budget["\(p.windowID)|\(p.url)", default: 0] += 1
+            let key = "\(p.windowID)|\(p.url)"
+            expected[key] = min(expected[key] ?? Int.max, p.expectedRemaining)
         }
-        return wins.compactMap { w in
-            let kept = w.tabs.filter { tab in
+        var counts: [String: Int] = [:]
+        for w in wins {
+            for t in w.tabs { counts["\(w.id)|\(t.url)", default: 0] += 1 }
+        }
+        var surplus: [String: Int] = [:]
+        for (key, exp) in expected {
+            surplus[key] = max(0, (counts[key] ?? 0) - exp)
+        }
+        let out: [SafariWindow] = wins.compactMap { w in
+            var kept: [SafariTab] = []
+            for tab in w.tabs.reversed() {
                 let key = "\(w.id)|\(tab.url)"
-                guard let n = budget[key], n > 0 else { return true }
-                budget[key] = n - 1
-                return false
+                if let n = surplus[key], n > 0 {
+                    surplus[key] = n - 1
+                } else {
+                    kept.append(tab)
+                }
             }
             guard !kept.isEmpty else { return nil }
-            return SafariWindow(id: w.id, index: w.index, tabs: kept)
+            return SafariWindow(id: w.id, index: w.index, tabs: kept.reversed())
         }
+        let still = pending.filter { p in
+            let key = "\(p.windowID)|\(p.url)"
+            return (counts[key] ?? 0) > (expected[key] ?? 0)
+        }
+        return (out, still)
     }
 
     func filtered(_ window: SafariWindow) -> [SafariTab] {
@@ -190,11 +217,16 @@ final class TabsStore: ObservableObject {
     }
 
     /// Close a tab: tombstone it, drop it optimistically, then close in Safari
-    /// and re-sync once Safari confirms. If the close fails, retract the
-    /// tombstone right away — the tab is still open, and it should come back
-    /// on the next refresh instead of popping in when the grace lapses.
+    /// and re-sync once Safari confirms. Retract the tombstone only when
+    /// Safari definitely had no such tab; on a timeout the close may still
+    /// have landed, and retracting would show the tab as alive and bait a
+    /// second close that kills an unrelated twin.
     func close(_ tab: SafariTab) {
-        pendingCloses.append(PendingClose(windowID: tab.windowID, url: tab.url, at: Date()))
+        let matches = windows.first(where: { $0.id == tab.windowID })?
+            .tabs.filter { $0.url == tab.url }.count ?? 1
+        pendingCloses.append(PendingClose(
+            windowID: tab.windowID, url: tab.url,
+            expectedRemaining: max(0, matches - 1), at: Date()))
         withAnimation(.easeOut(duration: 0.15)) {
             windows = windows.compactMap { window in
                 let kept = window.tabs.filter { $0.id != tab.id }
@@ -204,9 +236,11 @@ final class TabsStore: ObservableObject {
         }
         reconcileOrder()
         Task.detached {
-            let ok = SafariBridge.closeTab(tab)
+            let outcome = SafariBridge.closeTab(tab)
             await MainActor.run {
-                if !ok { self.retractPendingClose(windowID: tab.windowID, url: tab.url) }
+                if outcome == .notFound {
+                    self.retractPendingClose(windowID: tab.windowID, url: tab.url)
+                }
                 self.refresh()
             }
         }
